@@ -4,12 +4,6 @@ from utils import to_tr_timezone
 # ==================================================
 # SUCCESS TRACKING (IN-MEMORY - DAILY)
 # ==================================================
-# format:
-# success_tracker[symbol][date] = {
-#   "entry": price,
-#   "target": price * 1.02,
-#   "hit": True/False
-# }
 success_tracker = {}
 
 # ==================================================
@@ -41,17 +35,13 @@ def fmt_support_resistance(sr):
 # ==================================================
 def check_success(symbol, price):
     today = to_tr_timezone(datetime.now(timezone.utc)).date()
-
     if symbol not in success_tracker:
         return None
-
     day_data = success_tracker[symbol].get(today)
     if not day_data:
         return None
-
     if not day_data["hit"] and price >= day_data["target"]:
         day_data["hit"] = True
-
     return "BAŞARILI ✅" if day_data["hit"] else "BAŞARISIZ ❌"
 
 def register_signal(symbol, price):
@@ -96,7 +86,6 @@ def process_signals(item):
     # ---------------- SUPER KOMBİNE ----------------
     if score and score >= 80:
         register_signal(symbol, price)
-
         msg = (
             f"Hisse Takip: {symbol}\n"
             f"💎🚀 SÜPER KOMBİNE SİNYAL\n"
@@ -108,58 +97,96 @@ def process_signals(item):
             f"📉 Destek – Direnç:\n{fmt_support_resistance(sr)}\n\n"
             f"Sinyal zamanı (TR): {ts}"
         )
-
         out.append((
             f"SUPER-{symbol}",
             msg,
             {
                 "type": "super",
                 "score": score,
-                "success": success_status
+                "success": success_status,
+                "ma": ma,
+                "support_resistance": sr,
+                "price": price,
+                "rsi": rsi,
+                "volume": volume,
+                "change": change
             }
         ))
 
     # ---------------- KOMBİNE ----------------
     if item.get("composite_signal") == "A":
         register_signal(symbol, price)
-
         out.append((
             f"COMBO-{symbol}",
             f"🚀 Kombine Sinyal - {symbol}",
             {
                 "type": "combo",
-                "success": success_status
+                "success": success_status,
+                "ma": ma,
+                "support_resistance": sr,
+                "price": price,
+                "rsi": rsi,
+                "volume": volume,
+                "change": change
             }
         ))
 
     # ---------------- 3 TEPE ----------------
     if item.get("three_peak_break"):
         register_signal(symbol, price)
-
         out.append((
             f"3PEAK-{symbol}",
             f"🔥 3'lü Tepe Kırılımı - {symbol}",
             {
                 "type": "3peak",
-                "success": success_status
+                "success": success_status,
+                "ma": ma,
+                "support_resistance": sr,
+                "price": price,
+                "rsi": rsi,
+                "volume": volume,
+                "change": change
             }
         ))
 
     return out
+
 # ================== LOOP TARAMA ÖNCESİ ==================
 def safe_process_bist_data(data_list):
-    """
-    fetch_bist_data() boş veya None dönerse sorun çıkmasın.
-    Her item için process_signals() çağırır.
-    """
     results = []
     if not data_list:
-        return results  # sessiz skip, boş veri
+        return results
     for item in data_list:
         try:
             sigs = process_signals(item)
             if sigs:
                 results.extend(sigs)
         except Exception:
-            continue  # hatalı item skip edilir, loop devam eder
+            continue
     return results
+
+# ================== DASHBOARD MAPPING ==================
+def map_signals_for_dashboard(signal_list):
+    """
+    process_signals() çıktısını frontend dashboard'un DATA array formatına çevirir.
+    Mevcut tüm özellikler korunur.
+    """
+    dashboard_data = []
+
+    for sig in signal_list:
+        for _, msg, info in [sig]:
+            item = {}
+            item["symbol"] = _.split("-")[-1]  # SUPER-XYZ -> XYZ
+            item["current_price"] = info.get("price") or 0
+            item["RSI"] = info.get("rsi")
+            item["volume"] = info.get("volume")
+            item["daily_change"] = info.get("change")
+            item["composite_signal"] = True if info.get("type") == "combo" else False
+            item["three_peak_break"] = True if info.get("type") == "3peak" else False
+            item["super_score"] = info.get("score") if info.get("type") == "super" else None
+            item["success_label"] = info.get("success")
+            item["ma_breaks"] = info.get("ma") or {}
+            item["support_resistance"] = info.get("support_resistance") or {}
+            dashboard_data.append(item)
+
+    return dashboard_data
