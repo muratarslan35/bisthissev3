@@ -146,3 +146,20 @@ def process_signals(item):
         ))
 
     return out
+# ================== LOOP TARAMA ÖNCESİ ==================
+def safe_process_bist_data(data_list):
+    """
+    fetch_bist_data() boş veya None dönerse sorun çıkmasın.
+    Her item için process_signals() çağırır.
+    """
+    results = []
+    if not data_list:
+        return results  # sessiz skip, boş veri
+    for item in data_list:
+        try:
+            sigs = process_signals(item)
+            if sigs:
+                results.extend(sigs)
+        except Exception:
+            continue  # hatalı item skip edilir, loop devam eder
+    return results
