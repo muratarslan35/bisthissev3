@@ -53,15 +53,16 @@ def fetch_one_symbol(sym):
             return None
 
     close = df_15["Close"]
-    current_price = float(close.iloc[-1])
+    current_price = float(close.iloc[-1].item())  # FutureWarning giderildi
 
     try:
-        rsi = float(calculate_rsi(close).iloc[-1])
+        rsi_series = calculate_rsi(close)
+        rsi = float(rsi_series.iloc[-1].item())     # FutureWarning giderildi
     except:
         rsi = None
 
     last_signal = None
-    if rsi:
+    if rsi is not None:
         if rsi < 30:
             last_signal = "AL"
         elif rsi > 70:
@@ -70,7 +71,7 @@ def fetch_one_symbol(sym):
     return {
         "symbol": sym.replace(".IS", ""),
         "current_price": current_price,
-        "rsi_15": rsi,
+        "RSI": rsi,  # app.py ile uyumlu
         "last_signal": last_signal,
         "three_peak_break": detect_three_peaks(close),
     }
