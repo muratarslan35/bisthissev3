@@ -11,80 +11,166 @@ from self_ping import start_self_ping
 
 app = Flask(__name__)
 
-# ================= STATE =================
-LATEST_DATA = []
-LAST_SCAN_TS = 0
-SYSTEM_STARTED = False
+# ================== GLOBALS ==================
+LATEST_DATA = {"status": "init", "data": None, "timestamp": None}
 data_lock = threading.Lock()
 
-# ================= ENV =================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_IDS = [int(x) for x in os.getenv("CHAT_IDS", "").split(",") if x]
+TELEGRAM_TOKEN = "8588829956:AAEK2-wa75CoHQPjPFEAUU_LElRBduC-_TU"
+CHAT_IDS = [661794787]
 
-# ================= TELEGRAM =================
+sent_signals = {}        # { symbol: set(signal_keys) }
+last_reset_date = None  # date object (TR)
+
+# ================== JSON SAFE ==================
+def json_safe(obj):
+    """
+    numpy / bool / non-serializable tipleri JSON uyumlu hale getirir
+    """
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [json_safe(v) for v in obj]
+    if hasattr(obj, "item"):  # numpy scalar
+        return obj.item()
+    return obj
+
+# ================== TELEGRAM ==================
 def telegram_send(text):
-    if not TELEGRAM_TOKEN or not CHAT_IDS:
-        return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     for cid in CHAT_IDS:
         try:
-            requests.post(url, json={"chat_id": cid, "text": text}, timeout=5)
-        except:
-            pass
+            payload = {
+                "chat_id": cid,
+                "text": text,
+                "parse_mode": "HTML"
+            }
+            requests.post(url, json=payload, timeout=8)
+        except Exception as e:
+            app.logger.error(f"[TELEGRAM ERROR] {e}")
 
-# ================= MARKET =================
-def market_open_status():
-    now = to_tr_timezone(datetime.now(timezone.utc))
-    if now.weekday() >= 5:
-        return 0
-    return 1 if (now.hour > 9 or (now.hour == 9 and now.minute >= 55)) and now.hour < 18 else 0
+# ================== 09:50 RESET ==================
+def check_daily_reset():
+    """
+    Her gün SAAT 09:50 (TR) olduğunda
+    gönderilmiş sinyalleri sıfırlar
+    """
+    global sent_signals, last_reset_date
 
-# ================= BACKGROUND =================
-def background_loop():
-    global LATEST_DATA, LAST_SCAN_TS, SYSTEM_STARTED
+    now_tr = to_tr_timezone(datetime.now(timezone.utc))
+    today = now_tr.date()
 
-    SYSTEM_STARTED = True
-    telegram_send("🤖 Sistem başlatıldı – tarama başladı")
+    if now_tr.hour > 9 or (now_tr.hour == 9 and now_tr.minute >= 50):
+        if last_reset_date != today:
+            sent_signals = {}
+            last_reset_date = today
+            app.logger.info("🔄 09:50 reset yapıldı – sinyaller sıfırlandı")
+
+# ================== MA FORMAT ==================
+def fmt_ma(ma):
+    out = []
+    for k, v in ma.items():
+        if v == "above":
+            out.append(f"{k}: ÜSTTE")
+        elif v == "below":
+            out.append(f"{k}: ALTI")
+        elif v == "golden_cross":
+            out.append(f"{k}: GOLDEN CROSS")
+        elif v == "death_cross":
+            out.append(f"{k}: DEATH CROSS")
+    return " | ".join(out)
+
+# ================== SIGNAL PROCESS ==================
+def process_and_notify(data):
+    global sent_signals
+
+    # 🔄 reset kontrolü
+    check_daily_reset()
+
+    for item in data:
+        symbol = item.get("symbol")
+        if not symbol:
+            continue
+
+        sent_signals.setdefault(symbol, set())
+
+        price = item.get("current_price")
+        rsi = item.get("RSI")
+        trend = item.get("trend")
+        volume = item.get("volume")
+        daily_change = item.get("daily_change")
+        ma = item.get("ma_breaks", {})
+
+        dt_tr = to_tr_timezone(datetime.now(timezone.utc))
+        ts = dt_tr.strftime("%Y-%m-%d %H:%M:%S (TR)")
+
+        messages = []
+
+        if item.get("last_signal") == "AL" and "AL" not in sent_signals[symbol]:
+            messages.append("🟢 AL Sinyali")
+            sent_signals[symbol].add("AL")
+
+        if item.get("last_signal") == "SAT" and "SAT" not in sent_signals[symbol]:
+            messages.append("🔴 SAT Sinyali")
+            sent_signals[symbol].add("SAT")
+
+        if item.get("composite_signal") and "COMBO" not in sent_signals[symbol]:
+            messages.append("🚀🚀🚀 Kombine Sinyal")
+            sent_signals[symbol].add("COMBO")
+
+        if item.get("three_peak_break") and "TT" not in sent_signals[symbol]:
+            messages.append("🔥🔥 3'lü tepe kırılımı")
+            sent_signals[symbol].add("TT")
+
+        if not messages:
+            continue
+
+        text = (
+            f"<b>Hisse Takip: {symbol}</b>\n"
+            f"{' | '.join(messages)}\n\n"
+            f"Fiyat: {price} TL\n"
+            f"Trend: {trend}\n"
+            f"RSI: {rsi}\n"
+            f"Günlük Değişim: {daily_change}\n"
+            f"Hacim: {volume}\n\n"
+            f"MA: {fmt_ma(ma)}\n"
+            f"Sinyal zamanı: {ts}"
+        )
+
+        telegram_send(text)
+
+# ================== LOOP ==================
+def update_loop():
+    telegram_send("🤖 Sistem aktif – tarama başladı")
 
     while True:
         try:
             data = fetch_bist_data()
-
             with data_lock:
-                LATEST_DATA = data
-                LAST_SCAN_TS = int(time.time())
-
-            # 🔔 Telegram sinyal
-            for s in data:
-                if s.get("last_signal") in ("AL", "SAT"):
-                    telegram_send(
-                        f"📊 {s['symbol']}\n"
-                        f"Fiyat: {s['current_price']}\n"
-                        f"Sinyal: {s['last_signal']}\n"
-                        f"RSI: {round(s.get('rsi_15', 0),2)}"
-                    )
-
+                LATEST_DATA.update({
+                    "status": "ok",
+                    "timestamp": int(time.time()),
+                    "data": data
+                })
+            process_and_notify(data)
         except Exception as e:
-            print("SCAN ERROR:", e)
-
+            app.logger.error(f"[LOOP ERROR] {e}")
         time.sleep(60)
 
-# ================= AUTO START =================
-threading.Thread(target=background_loop, daemon=True).start()
-start_self_ping()
+# ================== START ==================
+_started = False
+@app.before_request
+def start_bg():
+    global _started
+    if not _started:
+        _started = True
+        threading.Thread(target=update_loop, daemon=True).start()
+        start_self_ping()
 
-# ================= API =================
-@app.route("/api")
-def api():
-    with data_lock:
-        return jsonify({
-            "system_active": int(SYSTEM_STARTED),
-            "market_open": int(market_open_status()),
-            "last_scan": int(LAST_SCAN_TS),
-            "data": LATEST_DATA
-        })
-
-# ================= DASHBOARD =================
 @app.route("/")
 def dashboard():
     return send_from_directory("static", "dashboard.html")
+
+@app.route("/api")
+def api():
+    with data_lock:
+        return jsonify(json_safe(LATEST_DATA))
