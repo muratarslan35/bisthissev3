@@ -25,17 +25,16 @@ CHAT_IDS = [int(x) for x in os.getenv("CHAT_IDS", "").split(",") if x]
 
 # ================= TELEGRAM =================
 def telegram_send(text):
-    if not TELEGRAM_TOKEN:
-        print("Telegram token yok")
+    if not TELEGRAM_TOKEN or not CHAT_IDS:
         return
-
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     for cid in CHAT_IDS:
         try:
-            requests.post(url, json={
-                "chat_id": cid,
-                "text": text
-            }, timeout=5)
+            requests.post(
+                url,
+                json={"chat_id": cid, "text": text},
+                timeout=5
+            )
         except Exception as e:
             print("Telegram error:", e)
 
@@ -48,7 +47,7 @@ def market_open_status():
         return 1
     return 0
 
-# ================= RESET =================
+# ================= 09:50 RESET =================
 def check_daily_reset():
     global sent_signals, last_reset_date
     now_tr = to_tr_timezone(datetime.now(timezone.utc))
@@ -65,7 +64,7 @@ def background_loop():
     global LATEST_DATA, LAST_SCAN_TS, SYSTEM_STARTED
 
     SYSTEM_STARTED = 1
-    telegram_send("🤖 Sistem başlatıldı – Render üzerinde aktif")
+    telegram_send("🤖 Sistem başlatıldı – BIST taraması aktif")
 
     while True:
         try:
@@ -76,15 +75,18 @@ def background_loop():
                 LATEST_DATA = data
                 LAST_SCAN_TS = int(time.time())
 
-            print("Scan OK | adet:", len(data))
+            print(f"[SCAN] OK | {len(data)} hisse")
 
         except Exception as e:
-            print("SCAN ERROR:", e)
+            print("[SCAN ERROR]", e)
 
         time.sleep(60)
 
-# 🔥 THREAD OTOMATİK BAŞLAT
-threading.Thread(target=background_loop, daemon=True).start()
+# ================= START THREAD IMMEDIATELY =================
+threading.Thread(
+    target=background_loop,
+    daemon=True
+).start()
 
 # ================= API =================
 @app.route("/api")
@@ -97,11 +99,6 @@ def api():
             "data": LATEST_DATA
         })
 
-# ================= WAKE =================
-@app.route("/wake")
-def wake():
-    return jsonify({"ok": 1})
-
 # ================= DASHBOARD =================
 @app.route("/")
 def dashboard():
@@ -109,4 +106,5 @@ def dashboard():
 
 # ================= MAIN =================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
