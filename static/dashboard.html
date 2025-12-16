@@ -2,78 +2,264 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<title>BIST Sinyal Paneli</title>
+<title>BIST Profesyonel Sinyal Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <style>
-body { margin:0; background:#0e1117; color:#e6edf3; font-family:Arial }
-header { background:#010409; padding:12px; display:flex; justify-content:space-between; align-items:center }
-.badge { padding:6px 10px; border-radius:6px; font-weight:bold }
-.green { background:#2ea043 }
-.red { background:#f85149 }
-.yellow { background:#d29922 }
-.container { padding:16px }
-.card { background:#161b22; padding:12px; border-radius:10px; margin-bottom:10px }
+:root{
+  --bg:#0f172a;
+  --card:#111827;
+  --text:#e5e7eb;
+  --muted:#9ca3af;
+  --green:#22c55e;
+  --red:#ef4444;
+  --yellow:#facc15;
+  --blue:#38bdf8;
+}
+
+.light{
+  --bg:#f8fafc;
+  --card:#ffffff;
+  --text:#0f172a;
+  --muted:#64748b;
+}
+
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:Inter,system-ui,Arial;
+}
+
+header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:14px 18px;
+  background:#020617;
+}
+
+h1{font-size:18px;margin:0}
+
+button,select{
+  background:#1f2933;
+  color:white;
+  border:none;
+  padding:6px 10px;
+  border-radius:6px;
+  cursor:pointer;
+}
+
+.light button,.light select{background:#e5e7eb;color:black}
+
+.container{
+  display:flex;
+}
+
+/* -------- SIDEBAR -------- */
+.sidebar{
+  width:220px;
+  padding:12px;
+  border-right:1px solid #1f2937;
+}
+
+.sidebar h3{font-size:14px;margin:8px 0}
+
+.filter{
+  margin-bottom:6px;
+}
+
+/* -------- CONTENT -------- */
+.content{
+  flex:1;
+  padding:16px;
+}
+
+.cards{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
+  gap:14px;
+}
+
+/* -------- CARD -------- */
+.card{
+  background:var(--card);
+  border-radius:12px;
+  padding:14px;
+  box-shadow:0 0 0 1px #1f2937;
+}
+
+.card-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+.symbol{
+  font-size:18px;
+  font-weight:bold;
+}
+
+.badge{
+  font-size:12px;
+  padding:4px 8px;
+  border-radius:999px;
+}
+
+.green{background:var(--green);color:black}
+.red{background:var(--red)}
+.yellow{background:var(--yellow);color:black}
+.blue{background:var(--blue);color:black}
+
+.section{
+  margin-top:8px;
+  font-size:13px;
+  line-height:1.4;
+}
+
+.muted{color:var(--muted)}
+
+.star{
+  cursor:pointer;
+  font-size:18px;
+}
+
+/* -------- FOOTER -------- */
+footer{
+  text-align:center;
+  padding:10px;
+  font-size:12px;
+  color:var(--muted);
+}
 </style>
 </head>
 
 <body>
-
 <header>
-  <b>BIST Tarayıcı</b>
-  <button onclick="wake()" class="badge yellow">Sistemi Uyandır</button>
+  <h1>📊 BIST Profesyonel Sinyal Dashboard</h1>
+  <div>
+    <button onclick="toggleTheme()">🌗 Tema</button>
+  </div>
 </header>
 
 <div class="container">
 
-  <div class="card">
-    <div>Sistem: <span id="sys" class="badge yellow">Kontrol</span></div>
-    <div>Piyasa: <span id="market" class="badge yellow">Kontrol</span></div>
-    <div>Tarama: <span id="scan" class="badge yellow">Bekleniyor</span></div>
-  </div>
+<!-- ========== SIDEBAR ========== -->
+<div class="sidebar">
+  <h3>Filtreler</h3>
 
-  <div id="signals"></div>
+  <div class="filter"><input type="checkbox" id="f_combo"> Kombine</div>
+  <div class="filter"><input type="checkbox" id="f_super"> Süper Kombine</div>
+  <div class="filter"><input type="checkbox" id="f_3peak"> 3’lü Tepe</div>
+  <div class="filter"><input type="checkbox" id="f_support"> Destek / Direnç</div>
+  <div class="filter"><input type="checkbox" id="f_fav"> Favoriler</div>
+
+  <button style="margin-top:8px;width:100%" onclick="applyFilters()">UYGULA</button>
 </div>
 
+<!-- ========== CONTENT ========== -->
+<div class="content">
+  <div class="cards" id="cards"></div>
+</div>
+
+</div>
+
+<footer>
+  Canlı veriler /api üzerinden alınır – Telegram ile senkron
+</footer>
+
 <script>
-async function wake() {
-  await fetch("/wake");
-  alert("Uyandırma isteği gönderildi");
+let DATA=[];
+let FILTERS={};
+
+function toggleTheme(){
+  document.body.classList.toggle("light");
 }
 
-async function load() {
-  const res = await fetch("/api");
-  const j = await res.json();
-  const now = Date.now();
+function applyFilters(){
+  FILTERS={
+    combo:document.getElementById("f_combo").checked,
+    super:document.getElementById("f_super").checked,
+    peak:document.getElementById("f_3peak").checked,
+    sr:document.getElementById("f_support").checked,
+    fav:document.getElementById("f_fav").checked
+  };
+  render();
+}
 
-  // SYSTEM
-  sys.textContent = j.system_active ? "AKTİF" : "PASİF";
-  sys.className = "badge " + (j.system_active ? "green" : "red");
+function toggleFav(sym){
+  let fav=JSON.parse(localStorage.getItem("fav")||"[]");
+  if(fav.includes(sym)) fav=fav.filter(x=>x!==sym);
+  else fav.push(sym);
+  localStorage.setItem("fav",JSON.stringify(fav));
+  render();
+}
 
-  // MARKET
-  market.textContent = j.market_open ? "AÇIK" : "KAPALI";
-  market.className = "badge " + (j.market_open ? "green" : "red");
+function render(){
+  const fav=JSON.parse(localStorage.getItem("fav")||"[]");
+  const box=document.getElementById("cards");
+  box.innerHTML="";
 
-  // SCAN
-  if (j.last_scan && (now - j.last_scan * 1000) < 180000) {
-    scan.textContent = "TARAMA AKTİF";
-    scan.className = "badge green";
-  } else {
-    scan.textContent = "BEKLEME";
-    scan.className = "badge yellow";
-  }
+  DATA.forEach(it=>{
+    if(FILTERS.fav && !fav.includes(it.symbol)) return;
+    if(FILTERS.combo && !it.composite_signal) return;
+    if(FILTERS.super && !it.super_score) return;
+    if(FILTERS.peak && !it.three_peak_break) return;
 
-  // SIGNALS
-  const box = document.getElementById("signals");
-  box.innerHTML = "";
-  (j.data || []).forEach(s => {
-    const c = document.createElement("div");
-    c.className = "card";
-    c.innerHTML = `<b>${s.symbol}</b><br>Fiyat: ${s.current_price}`;
-    box.appendChild(c);
+    const star=fav.includes(it.symbol)?"⭐":"☆";
+
+    box.innerHTML+=`
+    <div class="card">
+      <div class="card-header">
+        <div class="symbol">${it.symbol}</div>
+        <div>
+          <span class="star" onclick="toggleFav('${it.symbol}')">${star}</span>
+        </div>
+      </div>
+
+      <div class="section">
+        Fiyat: <b>${it.current_price}</b> |
+        RSI: ${it.RSI}
+      </div>
+
+      <div class="section muted">
+        Günlük: ${it.daily_change} | Hacim: ${it.volume}
+      </div>
+
+      ${it.super_score?`
+      <div class="section">
+        <span class="badge blue">Süper Skor ${it.super_score}/100</span>
+      </div>`:""}
+
+      ${it.success_label?`
+      <div class="section">
+        <span class="badge ${it.success_label==='BAŞARILI'?'green':'red'}">
+          ${it.success_label}
+        </span>
+      </div>`:""}
+
+      <div class="section muted">
+        MA: ${Object.entries(it.ma_breaks||{}).map(x=>`${x[0]}:${x[1]}`).join(" | ")}
+      </div>
+
+      ${it.support_resistance?`
+      <div class="section muted">
+        Destek: ${it.support_resistance["1D"]?.support}
+        | Direnç: ${it.support_resistance["1D"]?.resistance}
+      </div>`:""}
+
+    </div>`;
   });
 }
 
-setInterval(load, 5000);
+async function load(){
+  const r=await fetch("/api");
+  const j=await r.json();
+  DATA=j.data||[];
+  render();
+}
+
+setInterval(load,30000);
 load();
 </script>
 
