@@ -7,17 +7,15 @@ from datetime import datetime, timezone
 from flask import Flask, jsonify, send_from_directory
 from fetch_bist import fetch_bist_data
 from utils import to_tr_timezone
+from self_ping import start_self_ping
 
 app = Flask(__name__)
 
-# ================= GLOBAL STATE =================
+# ================= STATE =================
 LATEST_DATA = []
 LAST_SCAN_TS = 0
-SYSTEM_STARTED = 0
+SYSTEM_STARTED = False
 data_lock = threading.Lock()
-
-sent_signals = {}
-last_reset_date = None
 
 # ================= ENV =================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -30,72 +28,59 @@ def telegram_send(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     for cid in CHAT_IDS:
         try:
-            requests.post(
-                url,
-                json={"chat_id": cid, "text": text},
-                timeout=5
-            )
-        except Exception as e:
-            print("Telegram error:", e)
+            requests.post(url, json={"chat_id": cid, "text": text}, timeout=5)
+        except:
+            pass
 
-# ================= MARKET STATUS =================
+# ================= MARKET =================
 def market_open_status():
     now = to_tr_timezone(datetime.now(timezone.utc))
     if now.weekday() >= 5:
         return 0
-    if (now.hour > 9 or (now.hour == 9 and now.minute >= 55)) and now.hour < 18:
-        return 1
-    return 0
+    return 1 if (now.hour > 9 or (now.hour == 9 and now.minute >= 55)) and now.hour < 18 else 0
 
-# ================= 09:50 RESET =================
-def check_daily_reset():
-    global sent_signals, last_reset_date
-    now_tr = to_tr_timezone(datetime.now(timezone.utc))
-    today = now_tr.date()
-
-    if (now_tr.hour > 9) or (now_tr.hour == 9 and now_tr.minute >= 50):
-        if last_reset_date != today:
-            sent_signals = {}
-            last_reset_date = today
-            telegram_send("🔄 09:50 reset – yeni gün taraması başladı")
-
-# ================= BACKGROUND LOOP =================
+# ================= BACKGROUND =================
 def background_loop():
     global LATEST_DATA, LAST_SCAN_TS, SYSTEM_STARTED
 
-    SYSTEM_STARTED = 1
-    telegram_send("🤖 Sistem başlatıldı – BIST taraması aktif")
+    SYSTEM_STARTED = True
+    telegram_send("🤖 Sistem başlatıldı – tarama başladı")
 
     while True:
         try:
-            check_daily_reset()
             data = fetch_bist_data()
 
             with data_lock:
                 LATEST_DATA = data
                 LAST_SCAN_TS = int(time.time())
 
-            print(f"[SCAN] OK | {len(data)} hisse")
+            # 🔔 Telegram sinyal
+            for s in data:
+                if s.get("last_signal") in ("AL", "SAT"):
+                    telegram_send(
+                        f"📊 {s['symbol']}\n"
+                        f"Fiyat: {s['current_price']}\n"
+                        f"Sinyal: {s['last_signal']}\n"
+                        f"RSI: {round(s.get('rsi_15', 0),2)}"
+                    )
 
         except Exception as e:
-            print("[SCAN ERROR]", e)
+            print("SCAN ERROR:", e)
 
         time.sleep(60)
 
-# ================= START THREAD IMMEDIATELY =================
-threading.Thread(
-    target=background_loop,
-    daemon=True
-).start()
+# ================= AUTO START =================
+threading.Thread(target=background_loop, daemon=True).start()
+start_self_ping()
 
 # ================= API =================
 @app.route("/api")
 def api():
     with data_lock:
         return jsonify({
-            "system_active": SYSTEM_STARTED,
-            "market_open": market_open_status(),
-            "last_scan": LAST_SCAN_TS,
+            "system_active": int(SYSTEM_STARTED),
+            "market_open": int(market_open_status()),
+            "last_scan": int(LAST_SCAN_TS),
             "data": LATEST_DATA
         })
 
@@ -103,8 +88,3 @@ def api():
 @app.route("/")
 def dashboard():
     return send_from_directory("static", "dashboard.html")
-
-# ================= MAIN =================
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
